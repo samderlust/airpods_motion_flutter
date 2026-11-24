@@ -1,3 +1,7 @@
+## 0.1.2
+
+- Cleaned up `README.md` documentation.
+
 ## 0.1.1
 
 - Added Apple privacy manifests (`PrivacyInfo.xcprivacy`) for iOS and macOS (CocoaPods resource bundles and SPM resources) and replaced `ProcessInfo.processInfo.systemUptime` with hardware-synchronized `motion.timestamp` (`ITMS-91053` compliance).

@@ -19,20 +19,6 @@ Calibrated 6-DoF AirPods & Beats head-motion telemetry (`CMHeadphoneMotionManage
 
 ---
 
-## Comparison vs `flutter_airpods`
-
-| Capability | `airpods_motion_flutter` | `flutter_airpods` |
-| --- | --- | --- |
-| Platforms | iOS 14+ & macOS 14+ (CocoaPods + SPM) | iOS |
-| Zero-point quaternion calibration | Native `calibrate()` / `resetCalibration()` | Manual in Dart |
-| Signal conditioning | Native `None`, `EMA`, or `1-Euro` filter | Unfiltered |
-| `EventChannel` rate throttling | Configurable `1..100` Hz | Fixed CoreMotion rate |
-| Live audio route & model detection | `AVAudioSession` + `CMHeadphoneMotionManagerDelegate` | Basic stream |
-| Sensor ear location (`leftEar`/`rightEar`) | Included (`CMDeviceMotion.SensorLocation`) | Not exposed |
-| Simulator & trace replay | Built-in `AirPodsMotionSimulator` | None |
-
----
-
 ## Architecture Overview
 
 ```text
