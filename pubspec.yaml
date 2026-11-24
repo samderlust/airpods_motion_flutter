@@ -1,0 +1,35 @@
+name: airpods_motion_flutter
+description: >-
+  Calibrated 6-DoF AirPods & Beats head-motion telemetry
+  (CMHeadphoneMotionManager) for Flutter with live route detection,
+  1-Euro/EMA smoothing, and simulator replay.
+version: 0.1.0
+repository: https://github.com/samderlust/airpods_motion_flutter
+topics:
+  - airpods
+  - coremotion
+  - head-tracking
+  - sensors
+  - bluetooth
+
+environment:
+  sdk: ^3.7.0
+  flutter: '>=3.24.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.1.8
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: AirpodsMotionFlutterPlugin
+      macos:
+        pluginClass: AirpodsMotionFlutterPlugin

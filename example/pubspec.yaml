@@ -1,0 +1,20 @@
+name: airpods_motion_flutter_example
+description: Demonstrates calibrated 6-DoF AirPods & Beats head-motion telemetry and simulator replay.
+publish_to: 'none'
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  airpods_motion_flutter:
+    path: ../
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
