@@ -17,6 +17,7 @@ void main() {
   late bool nativeStartShouldSucceed;
   late bool nativeCalibrateResult;
   late bool nativeResetResult;
+  late String nativeAuthorizationStatus;
   late Map<String, dynamic> nativeDevicePayload;
 
   setUp(() {
@@ -24,14 +25,16 @@ void main() {
     nativeStartShouldSucceed = true;
     nativeCalibrateResult = true;
     nativeResetResult = true;
+    nativeAuthorizationStatus = 'authorized';
     nativeDevicePayload = <String, dynamic>{
       'name': 'AirPods Pro 2',
       'isConnected': true,
       'isMotionAvailable': true,
       'isActive': false,
-      'sampleRateHz': 15,
+      'sampleRateHz': 0,
       'isCalibrated': false,
       'sensorLocation': 'leftEar',
+      'authorizationStatus': 'authorized',
       'isSimulated': false,
     };
 
@@ -41,6 +44,8 @@ void main() {
           switch (call.method) {
             case 'getDeviceInfo':
               return nativeDevicePayload;
+            case 'getAuthorizationStatus':
+              return nativeAuthorizationStatus;
             case 'startTracking':
               return nativeStartShouldSucceed;
             case 'stopTracking':
@@ -87,7 +92,17 @@ void main() {
       expect(device.isConnected, isTrue);
       expect(device.isMotionAvailable, isTrue);
       expect(device.sensorLocation, HeadphoneSensorLocation.leftEar);
+      expect(
+        device.authorizationStatus,
+        HeadphoneAuthorizationStatus.authorized,
+      );
       expect(device.isSimulated, isFalse);
+
+      nativeAuthorizationStatus = 'denied';
+      expect(
+        await airpods.getAuthorizationStatus(),
+        HeadphoneAuthorizationStatus.denied,
+      );
     });
 
     test(
@@ -287,6 +302,121 @@ void main() {
         );
         expect(started, isFalse);
         await airpods.stopTracking();
+      },
+    );
+
+    test('forwards native type: error events onto errorStream', () async {
+      final airpods = AirPodsMotion(platform: MethodChannelAirpodsMotion());
+      addTearDown(airpods.dispose);
+
+      final errors = <AirPodsMotionError>[];
+      final sub = airpods.errorStream.listen(errors.add);
+
+      await airpods.startTracking();
+      await pushNativeEvent(<String, dynamic>{
+        'type': 'error',
+        'code': 'CMErrorDomain:105',
+        'message': 'Headphone motion authorization denied.',
+        'authorizationStatus': 'denied',
+      });
+
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(errors, hasLength(1));
+      expect(errors.first.code, 'CMErrorDomain:105');
+      expect(errors.first.message, 'Headphone motion authorization denied.');
+      expect(
+        errors.first.authorizationStatus,
+        HeadphoneAuthorizationStatus.denied,
+      );
+    });
+
+    test(
+      'SimulatorFallbackMode.manual activates simulator without synthetic loop and supports manual emitEuler + calibrate',
+      () async {
+        nativeStartShouldSucceed = false;
+        final airpods = AirPodsMotion(platform: MethodChannelAirpodsMotion());
+        addTearDown(airpods.dispose);
+
+        final samples = <HeadphoneMotionSample>[];
+        final motionSub = airpods.motionStream.listen(samples.add);
+
+        final nativeStarted = await airpods.startTracking(
+          config: const AirPodsMotionConfig(
+            sampleRateHz: 30,
+            simulatorFallbackMode: SimulatorFallbackMode.manual,
+          ),
+        );
+
+        expect(nativeStarted, isFalse);
+        expect(airpods.isSimulating, isTrue);
+        expect(airpods.isTracking, isTrue);
+        expect(airpods.simulator.isRunning, isFalse);
+        expect(
+          await airpods.getAuthorizationStatus(),
+          HeadphoneAuthorizationStatus.authorized,
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 45));
+        expect(samples, isEmpty);
+
+        airpods.simulator.emitEuler(pitchDeg: 10.0, yawDeg: -20.0);
+        expect(await airpods.calibrate(), isTrue);
+        airpods.simulator.emitEuler(pitchDeg: 15.0, yawDeg: -10.0);
+        await Future<void>.delayed(Duration.zero);
+        await motionSub.cancel();
+
+        expect(samples, hasLength(2));
+        expect(samples[0].isCalibrated, isFalse);
+        expect(samples[1].pitchDeg, closeTo(5.0, 1e-9));
+        expect(samples[1].yawDeg, closeTo(10.0, 1e-9));
+        expect(samples[1].isCalibrated, isTrue);
+      },
+    );
+
+    test('dispose() calls native stopTracking() on non-singleton instance', () async {
+      final airpods = AirPodsMotion(platform: MethodChannelAirpodsMotion());
+      await airpods.startTracking();
+      recordedCalls.clear();
+
+      await airpods.dispose();
+
+      expect(recordedCalls.map((c) => c.method), contains('stopTracking'));
+      expect(airpods.isTracking, isFalse);
+    });
+
+    test(
+      'AirPodsMotion.instance.dispose() stops tracking without closing singleton streams',
+      () async {
+        nativeStartShouldSucceed = false;
+        final instance = AirPodsMotion.instance;
+        await instance.startTracking(
+          config: const AirPodsMotionConfig(
+            simulatorFallbackMode: SimulatorFallbackMode.manual,
+          ),
+        );
+        expect(instance.isTracking, isTrue);
+
+        await instance.dispose();
+        expect(instance.isTracking, isFalse);
+        expect(instance.isSimulating, isFalse);
+
+        // Singleton streams remain open and reusable after dispose().
+        final samples = <HeadphoneMotionSample>[];
+        final sub = instance.motionStream.listen(samples.add);
+        await instance.startTracking(
+          config: const AirPodsMotionConfig(
+            simulatorFallbackMode: SimulatorFallbackMode.manual,
+          ),
+        );
+        instance.simulator.emitEuler(pitchDeg: 4.0);
+        await Future<void>.delayed(Duration.zero);
+        await sub.cancel();
+        await instance.stopTracking();
+
+        expect(samples, hasLength(1));
+        expect(samples.first.pitchDeg, 4.0);
       },
     );
   });

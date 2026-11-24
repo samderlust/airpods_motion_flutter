@@ -30,6 +30,13 @@ abstract class AirpodsMotionPlatform extends PlatformInterface {
     throw UnimplementedError('getDeviceInfo() has not been implemented.');
   }
 
+  /// Queries the current CoreMotion headphone motion authorization status.
+  Future<HeadphoneAuthorizationStatus> getAuthorizationStatus() {
+    throw UnimplementedError(
+      'getAuthorizationStatus() has not been implemented.',
+    );
+  }
+
   /// Starts native headphone motion tracking with [config].
   ///
   /// Returns `true` if native motion updates started, or `false` when motion
@@ -64,4 +71,8 @@ abstract class AirpodsMotionPlatform extends PlatformInterface {
   Stream<HeadphoneDevice> get deviceStream {
     throw UnimplementedError('deviceStream has not been implemented.');
   }
+
+  /// Broadcast stream of CoreMotion runtime errors.
+  Stream<AirPodsMotionError> get errorStream =>
+      const Stream<AirPodsMotionError>.empty();
 }

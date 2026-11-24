@@ -110,18 +110,71 @@ void main() {
         'sampleRateHz': 25,
         'isCalibrated': true,
         'sensorLocation': 'rightEar',
+        'authorizationStatus': 'authorized',
         'isSimulated': false,
       });
 
       expect(device.model, HeadphoneHardwareModel.airPodsMax);
       expect(device.sensorLocation, HeadphoneSensorLocation.rightEar);
+      expect(device.authorizationStatus, HeadphoneAuthorizationStatus.authorized);
       expect(device.isConnected, isTrue);
       expect(device.isActive, isTrue);
 
-      final updated = device.copyWith(isCalibrated: false, sampleRateHz: 15);
+      final updated = device.copyWith(
+        isCalibrated: false,
+        sampleRateHz: 15,
+        authorizationStatus: HeadphoneAuthorizationStatus.denied,
+      );
       expect(updated.isCalibrated, isFalse);
       expect(updated.sampleRateHz, 15);
+      expect(updated.authorizationStatus, HeadphoneAuthorizationStatus.denied);
       expect(HeadphoneDevice.fromMap(updated.toMap()), equals(updated));
+      expect(HeadphoneDevice.fromMap(updated.toMap()).hashCode, equals(updated.hashCode));
+    });
+  });
+
+  group('HeadphoneAuthorizationStatus & AirPodsMotionError', () {
+    test('fromWireValue parses all authorization statuses', () {
+      expect(
+        HeadphoneAuthorizationStatus.fromWireValue('notDetermined'),
+        HeadphoneAuthorizationStatus.notDetermined,
+      );
+      expect(
+        HeadphoneAuthorizationStatus.fromWireValue('restricted'),
+        HeadphoneAuthorizationStatus.restricted,
+      );
+      expect(
+        HeadphoneAuthorizationStatus.fromWireValue('denied'),
+        HeadphoneAuthorizationStatus.denied,
+      );
+      expect(
+        HeadphoneAuthorizationStatus.fromWireValue('authorized'),
+        HeadphoneAuthorizationStatus.authorized,
+      );
+      expect(
+        HeadphoneAuthorizationStatus.fromWireValue('unknown'),
+        HeadphoneAuthorizationStatus.unknown,
+      );
+      expect(
+        HeadphoneAuthorizationStatus.fromWireValue(null),
+        HeadphoneAuthorizationStatus.unknown,
+      );
+    });
+
+    test('AirPodsMotionError supports fromMap, toMap, and equality', () {
+      final error = AirPodsMotionError.fromMap(<String, dynamic>{
+        'code': 'CMErrorDomain:105',
+        'message': 'Motion permission denied.',
+        'authorizationStatus': 'denied',
+      });
+      expect(error.code, 'CMErrorDomain:105');
+      expect(error.message, 'Motion permission denied.');
+      expect(error.authorizationStatus, HeadphoneAuthorizationStatus.denied);
+
+      final roundtrip = AirPodsMotionError.fromMap(error.toMap());
+      expect(roundtrip, equals(error));
+      expect(roundtrip.hashCode, equals(error.hashCode));
+      expect(error.toString(), contains('CMErrorDomain:105'));
     });
   });
 
@@ -136,6 +189,52 @@ void main() {
       expect(high.smoothingAlpha, 1.0);
     });
 
+    test('SimulatorFallbackMode and autoFallbackToSimulator compatibility', () {
+      const defaultConfig = AirPodsMotionConfig();
+      expect(
+        defaultConfig.simulatorFallbackMode,
+        SimulatorFallbackMode.syntheticLoop,
+      );
+      expect(defaultConfig.autoFallbackToSimulator, isTrue);
+
+      const legacyDisabled = AirPodsMotionConfig(
+        autoFallbackToSimulator: false,
+      );
+      expect(legacyDisabled.simulatorFallbackMode, SimulatorFallbackMode.none);
+      expect(legacyDisabled.autoFallbackToSimulator, isFalse);
+
+      // Explicit simulatorFallbackMode takes precedence over autoFallbackToSimulator.
+      const manualOverride = AirPodsMotionConfig(
+        autoFallbackToSimulator: false,
+        simulatorFallbackMode: SimulatorFallbackMode.manual,
+      );
+      expect(manualOverride.simulatorFallbackMode, SimulatorFallbackMode.manual);
+      expect(manualOverride.autoFallbackToSimulator, isTrue);
+
+      const noneOverride = AirPodsMotionConfig(
+        autoFallbackToSimulator: true,
+        simulatorFallbackMode: SimulatorFallbackMode.none,
+      );
+      expect(noneOverride.simulatorFallbackMode, SimulatorFallbackMode.none);
+      expect(noneOverride.autoFallbackToSimulator, isFalse);
+
+      // Legacy map without simulatorFallbackMode derives from autoFallbackToSimulator.
+      final legacyRestored = AirPodsMotionConfig.fromMap(<String, dynamic>{
+        'sampleRateHz': 20,
+        'autoFallbackToSimulator': false,
+      });
+      expect(legacyRestored.simulatorFallbackMode, SimulatorFallbackMode.none);
+      expect(legacyRestored.autoFallbackToSimulator, isFalse);
+
+      // copyWith preserves manual mode and supports toggling.
+      final updatedRate = manualOverride.copyWith(sampleRateHz: 40);
+      expect(updatedRate.simulatorFallbackMode, SimulatorFallbackMode.manual);
+      expect(
+        manualOverride.copyWith(autoFallbackToSimulator: false).simulatorFallbackMode,
+        SimulatorFallbackMode.none,
+      );
+    });
+
     test('toMap and fromMap roundtrip', () {
       const config = AirPodsMotionConfig(
         sampleRateHz: 30,
@@ -144,7 +243,7 @@ void main() {
         oneEuroMinCutoff: 1.5,
         oneEuroBeta: 0.02,
         oneEuroDCutoff: 1.2,
-        autoFallbackToSimulator: false,
+        simulatorFallbackMode: SimulatorFallbackMode.manual,
       );
 
       final restored = AirPodsMotionConfig.fromMap(config.toMap());

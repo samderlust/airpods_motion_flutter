@@ -102,6 +102,88 @@ enum HeadphoneSensorLocation {
   }
 }
 
+/// CoreMotion motion & fitness authorization status for headphone motion updates.
+enum HeadphoneAuthorizationStatus {
+  /// The user has not yet made a choice regarding whether the app may access motion data.
+  notDetermined,
+
+  /// The app is not authorized to use motion data due to active restrictions (e.g. parental controls).
+  restricted,
+
+  /// The user explicitly denied access to motion data for this app.
+  denied,
+
+  /// The app is authorized to access headphone motion data.
+  authorized,
+
+  /// Authorization status is unavailable (e.g. unsupported platform or mock).
+  unknown;
+
+  /// Parses a [HeadphoneAuthorizationStatus] from its native wire representation.
+  static HeadphoneAuthorizationStatus fromWireValue(String? value) {
+    for (final status in values) {
+      if (status.name == value) {
+        return status;
+      }
+    }
+    return HeadphoneAuthorizationStatus.unknown;
+  }
+}
+
+/// Structured error event emitted when CoreMotion reports a runtime failure.
+class AirPodsMotionError {
+  /// Creates an [AirPodsMotionError].
+  const AirPodsMotionError({
+    required this.code,
+    required this.message,
+    this.authorizationStatus = HeadphoneAuthorizationStatus.unknown,
+  });
+
+  /// Deserializes an [AirPodsMotionError] from a platform channel map.
+  factory AirPodsMotionError.fromMap(Map<String, dynamic> map) {
+    return AirPodsMotionError(
+      code: (map['code'] as String?) ?? 'unknown',
+      message: (map['message'] as String?) ?? 'Unknown CoreMotion error.',
+      authorizationStatus: HeadphoneAuthorizationStatus.fromWireValue(
+        map['authorizationStatus'] as String?,
+      ),
+    );
+  }
+
+  /// Platform error code (e.g. `"CMErrorDomain:105"`).
+  final String code;
+
+  /// Human-readable localized error description.
+  final String message;
+
+  /// Authorization status at the time the error occurred.
+  final HeadphoneAuthorizationStatus authorizationStatus;
+
+  /// Serializes this error to a map.
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'code': code,
+    'message': message,
+    'authorizationStatus': authorizationStatus.name,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AirPodsMotionError &&
+          runtimeType == other.runtimeType &&
+          code == other.code &&
+          message == other.message &&
+          authorizationStatus == other.authorizationStatus;
+
+  @override
+  int get hashCode => Object.hash(code, message, authorizationStatus);
+
+  @override
+  String toString() =>
+      'AirPodsMotionError(code: $code, message: $message, '
+      'authorizationStatus: $authorizationStatus)';
+}
+
 /// Snapshot of the connected headphone device, motion capability, and tracking state.
 class HeadphoneDevice {
   /// Creates a [HeadphoneDevice] status snapshot.
@@ -114,6 +196,7 @@ class HeadphoneDevice {
     this.sampleRateHz = 0,
     this.isCalibrated = false,
     this.sensorLocation = HeadphoneSensorLocation.unknown,
+    this.authorizationStatus = HeadphoneAuthorizationStatus.unknown,
     this.isSimulated = false,
   });
 
@@ -141,6 +224,9 @@ class HeadphoneDevice {
       isCalibrated: (map['isCalibrated'] as bool?) ?? false,
       sensorLocation: HeadphoneSensorLocation.fromWireValue(
         map['sensorLocation'] as String?,
+      ),
+      authorizationStatus: HeadphoneAuthorizationStatus.fromWireValue(
+        map['authorizationStatus'] as String?,
       ),
       isSimulated: (map['isSimulated'] as bool?) ?? false,
     );
@@ -170,6 +256,9 @@ class HeadphoneDevice {
   /// Active IMU sensor location (`leftEar`, `rightEar`, `defaultLocation`, or `unknown`).
   final HeadphoneSensorLocation sensorLocation;
 
+  /// CoreMotion authorization status for headphone motion tracking.
+  final HeadphoneAuthorizationStatus authorizationStatus;
+
   /// Whether this device status represents simulated telemetry.
   final bool isSimulated;
 
@@ -183,6 +272,7 @@ class HeadphoneDevice {
     int? sampleRateHz,
     bool? isCalibrated,
     HeadphoneSensorLocation? sensorLocation,
+    HeadphoneAuthorizationStatus? authorizationStatus,
     bool? isSimulated,
   }) {
     return HeadphoneDevice(
@@ -194,6 +284,7 @@ class HeadphoneDevice {
       sampleRateHz: sampleRateHz ?? this.sampleRateHz,
       isCalibrated: isCalibrated ?? this.isCalibrated,
       sensorLocation: sensorLocation ?? this.sensorLocation,
+      authorizationStatus: authorizationStatus ?? this.authorizationStatus,
       isSimulated: isSimulated ?? this.isSimulated,
     );
   }
@@ -208,6 +299,7 @@ class HeadphoneDevice {
     'sampleRateHz': sampleRateHz,
     'isCalibrated': isCalibrated,
     'sensorLocation': sensorLocation.name,
+    'authorizationStatus': authorizationStatus.name,
     'isSimulated': isSimulated,
   };
 
@@ -224,6 +316,7 @@ class HeadphoneDevice {
           sampleRateHz == other.sampleRateHz &&
           isCalibrated == other.isCalibrated &&
           sensorLocation == other.sensorLocation &&
+          authorizationStatus == other.authorizationStatus &&
           isSimulated == other.isSimulated;
 
   @override
@@ -236,6 +329,7 @@ class HeadphoneDevice {
     sampleRateHz,
     isCalibrated,
     sensorLocation,
+    authorizationStatus,
     isSimulated,
   );
 
@@ -244,5 +338,6 @@ class HeadphoneDevice {
       'HeadphoneDevice(name: $name, model: $model, isConnected: $isConnected, '
       'isMotionAvailable: $isMotionAvailable, isActive: $isActive, '
       'sampleRateHz: $sampleRateHz, isCalibrated: $isCalibrated, '
-      'sensorLocation: $sensorLocation, isSimulated: $isSimulated)';
+      'sensorLocation: $sensorLocation, '
+      'authorizationStatus: $authorizationStatus, isSimulated: $isSimulated)';
 }

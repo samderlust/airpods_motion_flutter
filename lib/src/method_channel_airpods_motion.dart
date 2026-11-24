@@ -33,6 +33,8 @@ class MethodChannelAirpodsMotion extends AirpodsMotionPlatform {
       StreamController<HeadphoneMotionSample>.broadcast();
   final StreamController<HeadphoneDevice> _deviceController =
       StreamController<HeadphoneDevice>.broadcast();
+  final StreamController<AirPodsMotionError> _errorController =
+      StreamController<AirPodsMotionError>.broadcast();
 
   StreamSubscription<dynamic>? _eventSubscription;
 
@@ -62,6 +64,20 @@ class MethodChannelAirpodsMotion extends AirpodsMotionPlatform {
       sensorLocation: HeadphoneSensorLocation.unknown,
       isSimulated: true,
     );
+  }
+
+  @override
+  Future<HeadphoneAuthorizationStatus> getAuthorizationStatus() async {
+    try {
+      final raw = await methodChannel.invokeMethod<String>(
+        'getAuthorizationStatus',
+      );
+      return HeadphoneAuthorizationStatus.fromWireValue(raw);
+    } on MissingPluginException {
+      return HeadphoneAuthorizationStatus.unknown;
+    } on PlatformException {
+      return HeadphoneAuthorizationStatus.unknown;
+    }
   }
 
   @override
@@ -129,6 +145,12 @@ class MethodChannelAirpodsMotion extends AirpodsMotionPlatform {
     return _deviceController.stream;
   }
 
+  @override
+  Stream<AirPodsMotionError> get errorStream {
+    _ensureEventSubscription();
+    return _errorController.stream;
+  }
+
   void _ensureEventSubscription() {
     if (_eventSubscription != null) {
       return;
@@ -143,12 +165,21 @@ class MethodChannelAirpodsMotion extends AirpodsMotionPlatform {
           final type = map['type'] as String?;
           if (type == 'device') {
             _deviceController.add(HeadphoneDevice.fromMap(map));
+          } else if (type == 'error') {
+            _errorController.add(AirPodsMotionError.fromMap(map));
           } else {
             _motionController.add(HeadphoneMotionSample.fromMap(map));
           }
         },
-        onError: (_) {
-          // Swallow native stream errors to keep broadcast streams alive.
+        onError: (Object error) {
+          if (error is PlatformException) {
+            _errorController.add(
+              AirPodsMotionError(
+                code: error.code,
+                message: error.message ?? error.toString(),
+              ),
+            );
+          }
         },
         cancelOnError: false,
       );
@@ -163,5 +194,6 @@ class MethodChannelAirpodsMotion extends AirpodsMotionPlatform {
     _eventSubscription = null;
     await _motionController.close();
     await _deviceController.close();
+    await _errorController.close();
   }
 }

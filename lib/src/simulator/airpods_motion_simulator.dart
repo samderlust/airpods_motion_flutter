@@ -6,6 +6,14 @@ import '../models/headphone_motion_sample.dart';
 import '../models/headphone_quaternion.dart';
 import '../models/headphone_vector3.dart';
 
+double _wrapAngleDeg(double angle) {
+  var wrapped = (angle + 180.0) % 360.0;
+  if (wrapped <= 0.0) {
+    wrapped += 360.0;
+  }
+  return wrapped - 180.0;
+}
+
 /// Deterministic simulator and trace replay harness for testing and development
 /// without physical AirPods hardware (e.g., iOS Simulator, Linux, or unit tests).
 class AirPodsMotionSimulator {
@@ -19,11 +27,30 @@ class AirPodsMotionSimulator {
   int _generation = 0;
   bool _disposed = false;
 
+  ({double pitchDeg, double rollDeg, double yawDeg})? _lastRawEuler;
+  ({double pitchDeg, double rollDeg, double yawDeg})? _zeroOffset;
+
   /// Broadcast stream of simulated or replayed [HeadphoneMotionSample] frames.
   Stream<HeadphoneMotionSample> get stream => _controller.stream;
 
   /// Whether a synthetic loop is currently running.
   bool get isRunning => _syntheticTimer != null;
+
+  /// Whether a zero-point calibration offset is currently active.
+  bool get isCalibrated => _zeroOffset != null;
+
+  /// Captures the most recent raw Euler orientation (or origin if none yet)
+  /// as the zero-point offset for subsequent [emitEuler] calls.
+  bool calibrate() {
+    _zeroOffset =
+        _lastRawEuler ?? (pitchDeg: 0.0, rollDeg: 0.0, yawDeg: 0.0);
+    return true;
+  }
+
+  /// Clears any active zero-point calibration offset.
+  void resetCalibration() {
+    _zeroOffset = null;
+  }
 
   /// Emits a single pre-built [HeadphoneMotionSample] onto [stream].
   void emitSample(HeadphoneMotionSample sample) {
@@ -40,17 +67,28 @@ class AirPodsMotionSimulator {
     double rollDeg = 0,
     double yawDeg = 0,
     double acceleration = 0.02,
+    bool? isCalibrated,
     int? timestampMs,
   }) {
     if (_disposed) {
       return;
     }
 
+    _lastRawEuler = (pitchDeg: pitchDeg, rollDeg: rollDeg, yawDeg: yawDeg);
+
+    final offset = _zeroOffset;
+    final effectivePitch =
+        offset == null ? pitchDeg : pitchDeg - offset.pitchDeg;
+    final effectiveRoll =
+        offset == null ? rollDeg : _wrapAngleDeg(rollDeg - offset.rollDeg);
+    final effectiveYaw =
+        offset == null ? yawDeg : _wrapAngleDeg(yawDeg - offset.yawDeg);
+
     const degToRad = math.pi / 180.0;
-    final pitch = pitchDeg * degToRad;
-    final roll = rollDeg * degToRad;
+    final pitch = effectivePitch * degToRad;
+    final roll = effectiveRoll * degToRad;
     // Match native convention: +yawDeg turns right, CoreMotion yaw is +CCW.
-    final yaw = -yawDeg * degToRad;
+    final yaw = -effectiveYaw * degToRad;
 
     final cy = math.cos(yaw * 0.5);
     final sy = math.sin(yaw * 0.5);
@@ -76,16 +114,16 @@ class AirPodsMotionSimulator {
 
     emitSample(
       HeadphoneMotionSample(
-        pitchDeg: pitchDeg,
-        rollDeg: rollDeg,
-        yawDeg: yawDeg,
+        pitchDeg: effectivePitch,
+        rollDeg: effectiveRoll,
+        yawDeg: effectiveYaw,
         quaternion: quaternion,
         rotationRate: HeadphoneVector3.zero,
         userAcceleration: userAccel,
         gravity: gravity,
         accelerationMagnitude: acceleration.abs(),
         sensorLocation: HeadphoneSensorLocation.defaultLocation,
-        isCalibrated: true,
+        isCalibrated: isCalibrated ?? this.isCalibrated,
         isSimulated: true,
         timestampMs: timestampMs ?? DateTime.now().millisecondsSinceEpoch,
       ),

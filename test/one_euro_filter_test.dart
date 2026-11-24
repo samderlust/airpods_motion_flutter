@@ -68,9 +68,52 @@ void main() {
       // Next sample after reset should pass through unmodified.
       expect(filter.filter(-15.0, timestampSeconds: 2.0), -15.0);
     });
+
+    test('unwraps Euler angles across ±180° boundary without sweeping through 0°', () {
+      final angleFilter = OneEuroFilter(
+        minCutoff: 1.0,
+        beta: 0.007,
+        dCutoff: 1.0,
+        isAngleDegrees: true,
+      );
+
+      final first = angleFilter.filter(179.0, timestampSeconds: 0.0);
+      expect(first, closeTo(179.0, 1e-9));
+
+      final second = angleFilter.filter(-179.0, timestampSeconds: 0.05);
+      // Shortest path from +179° to -179° is +2°, so filtered output stays near ±180°.
+      expect(second.abs(), greaterThan(178.5));
+      expect(second.abs(), lessThanOrEqualTo(180.0));
+
+      final third = angleFilter.filter(-178.0, timestampSeconds: 0.10);
+      expect(third.abs(), greaterThan(177.5));
+      expect(third.abs(), lessThanOrEqualTo(180.0));
+    });
   });
 
   group('OneEuroPoseFilter', () {
+    test('filters Euler poses across ±180° wrap-around cleanly', () {
+      final poseFilter = OneEuroPoseFilter(minCutoff: 1.0, beta: 0.01);
+
+      final first = poseFilter.filterEuler(
+        pitchDeg: 0,
+        rollDeg: 179.0,
+        yawDeg: -179.0,
+        timestampMs: 1000,
+      );
+      expect(first.rollDeg, closeTo(179.0, 1e-9));
+      expect(first.yawDeg, closeTo(-179.0, 1e-9));
+
+      final second = poseFilter.filterEuler(
+        pitchDeg: 0,
+        rollDeg: -179.0,
+        yawDeg: 179.0,
+        timestampMs: 1050,
+      );
+      expect(second.rollDeg.abs(), greaterThan(178.5));
+      expect(second.yawDeg.abs(), greaterThan(178.5));
+    });
+
     test('filters Euler poses and HeadphoneMotionSample cleanly', () {
       final poseFilter = OneEuroPoseFilter(minCutoff: 1.0, beta: 0.01);
 

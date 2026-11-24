@@ -51,7 +51,7 @@ void main() {
       expect(s.rollDeg, -5.0);
       expect(s.yawDeg, 30.0);
       expect(s.isSimulated, isTrue);
-      expect(s.isCalibrated, isTrue);
+      expect(s.isCalibrated, isFalse);
       expect(s.timestampMs, 5000);
 
       final qNorm = math.sqrt(
@@ -62,6 +62,47 @@ void main() {
       );
       expect(qNorm, closeTo(1.0, 1e-6));
       expect(s.gravity.magnitude, closeTo(1.0, 1e-6));
+    });
+
+    test('calibrate and resetCalibration zero subsequent emitEuler outputs', () async {
+      final emitted = <HeadphoneMotionSample>[];
+      final sub = simulator.stream.listen(emitted.add);
+
+      expect(simulator.isCalibrated, isFalse);
+
+      simulator.emitEuler(pitchDeg: 10.0, rollDeg: -5.0, yawDeg: 175.0);
+      expect(simulator.calibrate(), isTrue);
+      expect(simulator.isCalibrated, isTrue);
+
+      // Re-emitting the calibration pose yields zeroed angles with isCalibrated=true.
+      simulator.emitEuler(pitchDeg: 10.0, rollDeg: -5.0, yawDeg: 175.0);
+      // Crossing ±180° from +175° to -175° produces +10° yaw delta.
+      simulator.emitEuler(pitchDeg: 12.0, rollDeg: -3.0, yawDeg: -175.0);
+
+      simulator.resetCalibration();
+      expect(simulator.isCalibrated, isFalse);
+
+      simulator.emitEuler(pitchDeg: 12.0, rollDeg: -3.0, yawDeg: -175.0);
+
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(emitted, hasLength(4));
+      expect(emitted[0].isCalibrated, isFalse);
+      expect(emitted[1].pitchDeg, closeTo(0.0, 1e-9));
+      expect(emitted[1].rollDeg, closeTo(0.0, 1e-9));
+      expect(emitted[1].yawDeg, closeTo(0.0, 1e-9));
+      expect(emitted[1].isCalibrated, isTrue);
+
+      expect(emitted[2].pitchDeg, closeTo(2.0, 1e-9));
+      expect(emitted[2].rollDeg, closeTo(2.0, 1e-9));
+      expect(emitted[2].yawDeg, closeTo(10.0, 1e-9));
+      expect(emitted[2].isCalibrated, isTrue);
+
+      expect(emitted[3].pitchDeg, closeTo(12.0, 1e-9));
+      expect(emitted[3].rollDeg, closeTo(-3.0, 1e-9));
+      expect(emitted[3].yawDeg, closeTo(-175.0, 1e-9));
+      expect(emitted[3].isCalibrated, isFalse);
     });
 
     test(

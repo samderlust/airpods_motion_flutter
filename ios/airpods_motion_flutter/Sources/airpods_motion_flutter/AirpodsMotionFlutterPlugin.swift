@@ -14,20 +14,41 @@ private enum NativeFilterMode: String {
   case oneEuro
 }
 
+/// Wraps an angle in degrees into `(-180.0, 180.0]`.
+private func wrapAngleDeg(_ angle: Double) -> Double {
+  var wrapped = (angle + 180.0).truncatingRemainder(dividingBy: 360.0)
+  if wrapped <= 0.0 {
+    wrapped += 360.0
+  }
+  return wrapped - 180.0
+}
+
+/// Returns the signed shortest angular delta in degrees from `from` to `to` in `(-180.0, 180.0]`.
+private func shortestAngleDeltaDeg(from: Double, to: Double) -> Double {
+  return wrapAngleDeg(to - from)
+}
+
 /// Adaptive 1-Euro low-pass filter (Casiez, Roussel, & Vogel, CHI 2012).
 private final class NativeOneEuroFilter {
   var minCutoff: Double
   var beta: Double
   var dCutoff: Double
+  let isAngleDegrees: Bool
 
   private var lastTimestampSec: Double?
   private var xPrev: Double?
   private var dxPrev: Double = 0.0
 
-  init(minCutoff: Double = 1.0, beta: Double = 0.007, dCutoff: Double = 1.0) {
+  init(
+    minCutoff: Double = 1.0,
+    beta: Double = 0.007,
+    dCutoff: Double = 1.0,
+    isAngleDegrees: Bool = false
+  ) {
     self.minCutoff = max(1e-4, minCutoff)
     self.beta = max(0.0, beta)
     self.dCutoff = max(1e-4, dCutoff)
+    self.isAngleDegrees = isAngleDegrees
   }
 
   func reset() {
@@ -38,10 +59,11 @@ private final class NativeOneEuroFilter {
 
   func filter(_ value: Double, timestampSec: Double) -> Double {
     guard let prevTs = lastTimestampSec, let prevX = xPrev else {
+      let initial = isAngleDegrees ? wrapAngleDeg(value) : value
       lastTimestampSec = timestampSec
-      xPrev = value
+      xPrev = initial
       dxPrev = 0.0
-      return value
+      return initial
     }
 
     let dt = timestampSec - prevTs
@@ -50,13 +72,19 @@ private final class NativeOneEuroFilter {
     }
     lastTimestampSec = timestampSec
 
-    let dx = (value - prevX) / dt
+    let basePrev = isAngleDegrees ? wrapAngleDeg(prevX) : prevX
+    let target = isAngleDegrees
+      ? basePrev + shortestAngleDeltaDeg(from: basePrev, to: value)
+      : value
+
+    let dx = (target - basePrev) / dt
     let alphaD = smoothingFactor(dt: dt, cutoff: dCutoff)
     let dxHat = exponentialSmoothing(alpha: alphaD, x: dx, xPrev: dxPrev)
 
     let cutoff = minCutoff + beta * abs(dxHat)
     let alpha = smoothingFactor(dt: dt, cutoff: cutoff)
-    let xHat = exponentialSmoothing(alpha: alpha, x: value, xPrev: prevX)
+    let rawXHat = exponentialSmoothing(alpha: alpha, x: target, xPrev: basePrev)
+    let xHat = isAngleDegrees ? wrapAngleDeg(rawXHat) : rawXHat
 
     xPrev = xHat
     dxPrev = dxHat
@@ -102,7 +130,7 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
 
   // Configurable sampling & filter state (protected by motionLock)
   private var configuredSampleRateHz: Int = 15
-  private var minEmitIntervalMs: Int64 = 66
+  private var minEmitIntervalSec: Double = 1.0 / 15.0
   private var filterMode: NativeFilterMode = .ema
   private var smoothingAlpha: Double = 0.25
 
@@ -111,12 +139,12 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
   private var filteredRollDeg: Double = 0.0
   private var filteredYawDeg: Double = 0.0
   private var filteredAccel: Double = 0.0
-  private var lastEmitTimeMs: Int64 = 0
+  private var lastEmitTimestampSec: Double?
 
-  private var pitchOneEuro = NativeOneEuroFilter()
-  private var rollOneEuro = NativeOneEuroFilter()
-  private var yawOneEuro = NativeOneEuroFilter()
-  private var accelOneEuro = NativeOneEuroFilter()
+  private var pitchOneEuro = NativeOneEuroFilter(isAngleDegrees: true)
+  private var rollOneEuro = NativeOneEuroFilter(isAngleDegrees: true)
+  private var yawOneEuro = NativeOneEuroFilter(isAngleDegrees: true)
+  private var accelOneEuro = NativeOneEuroFilter(isAngleDegrees: false)
 
   deinit {
     removeAudioRouteObserver()
@@ -148,6 +176,8 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
     switch call.method {
     case "getDeviceInfo":
       result(currentDeviceInfo())
+    case "getAuthorizationStatus":
+      result(currentAuthorizationStatus())
     case "startTracking":
       startTracking(arguments: call.arguments, result: result)
     case "stopTracking":
@@ -248,6 +278,21 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
     }
   }
 
+  private func currentAuthorizationStatus() -> String {
+    switch CMHeadphoneMotionManager.authorizationStatus() {
+    case .notDetermined:
+      return "notDetermined"
+    case .restricted:
+      return "restricted"
+    case .denied:
+      return "denied"
+    case .authorized:
+      return "authorized"
+    @unknown default:
+      return "unknown"
+    }
+  }
+
   private func currentDeviceInfo() -> [String: Any] {
     var bluetoothName: String?
     var hasBluetoothRoute = false
@@ -270,7 +315,7 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
     os_unfair_lock_lock(&motionLock)
     let motionConnected = isHeadphoneConnected
     let isCalibrated = referenceAttitude != nil
-    let sampleRateHz = isAvailable ? configuredSampleRateHz : 0
+    let sampleRateHz = isActive ? configuredSampleRateHz : 0
     let sensorLocation = latestSensorLocation
     os_unfair_lock_unlock(&motionLock)
 
@@ -285,12 +330,20 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
       "sampleRateHz": sampleRateHz,
       "isCalibrated": isCalibrated,
       "sensorLocation": sensorLocation,
+      "authorizationStatus": currentAuthorizationStatus(),
       "isSimulated": false,
     ]
   }
 
   private func startTracking(arguments: Any?, result: @escaping FlutterResult) {
     applyConfig(arguments: arguments)
+
+    let authStatus = CMHeadphoneMotionManager.authorizationStatus()
+    if authStatus == .denied || authStatus == .restricted {
+      emitDeviceUpdate()
+      result(false)
+      return
+    }
 
     let manager = ensureMotionManager()
     guard manager.isDeviceMotionAvailable else {
@@ -307,7 +360,23 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
     }
 
     manager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, error in
-      guard let self, let motion, error == nil else { return }
+      guard let self else { return }
+
+      if let error {
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          self.emitDeviceUpdate()
+          self.eventSink?([
+            "type": "error",
+            "code": "\((error as NSError).domain):\((error as NSError).code)",
+            "message": error.localizedDescription,
+            "authorizationStatus": self.currentAuthorizationStatus(),
+          ])
+        }
+        return
+      }
+
+      guard let motion else { return }
 
       let relative = motion.attitude.copy() as? CMAttitude ?? motion.attitude
       let acc = motion.userAcceleration
@@ -315,7 +384,7 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
       let grav = motion.gravity
       let rawAcc = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z)
       let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-      let monotonicSec = ProcessInfo.processInfo.systemUptime
+      let monotonicSec = motion.timestamp
       let locationName = self.sensorLocationName(motion)
 
       var shouldEmitDeviceUpdate = false
@@ -356,16 +425,22 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
         outAccel = rawAcc
       case .ema:
         if !self.hasFilteredSample {
-          self.filteredPitchDeg = rawPitch
-          self.filteredRollDeg = rawRoll
-          self.filteredYawDeg = rawYaw
+          self.filteredPitchDeg = wrapAngleDeg(rawPitch)
+          self.filteredRollDeg = wrapAngleDeg(rawRoll)
+          self.filteredYawDeg = wrapAngleDeg(rawYaw)
           self.filteredAccel = rawAcc
           self.hasFilteredSample = true
         } else {
           let a = self.smoothingAlpha
-          self.filteredPitchDeg += a * (rawPitch - self.filteredPitchDeg)
-          self.filteredRollDeg += a * (rawRoll - self.filteredRollDeg)
-          self.filteredYawDeg += a * (rawYaw - self.filteredYawDeg)
+          self.filteredPitchDeg = wrapAngleDeg(
+            self.filteredPitchDeg + a * shortestAngleDeltaDeg(from: self.filteredPitchDeg, to: rawPitch)
+          )
+          self.filteredRollDeg = wrapAngleDeg(
+            self.filteredRollDeg + a * shortestAngleDeltaDeg(from: self.filteredRollDeg, to: rawRoll)
+          )
+          self.filteredYawDeg = wrapAngleDeg(
+            self.filteredYawDeg + a * shortestAngleDeltaDeg(from: self.filteredYawDeg, to: rawYaw)
+          )
           self.filteredAccel += a * (rawAcc - self.filteredAccel)
         }
         outPitch = self.filteredPitchDeg
@@ -379,8 +454,8 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
         outAccel = self.accelOneEuro.filter(rawAcc, timestampSec: monotonicSec)
       }
 
-      if nowMs - self.lastEmitTimeMs >= self.minEmitIntervalMs {
-        self.lastEmitTimeMs = nowMs
+      if self.lastEmitTimestampSec == nil || (monotonicSec - self.lastEmitTimestampSec!) >= self.minEmitIntervalSec {
+        self.lastEmitTimestampSec = monotonicSec
         let q = relative.quaternion
         posePayload = [
           "type": "pose",
@@ -457,22 +532,22 @@ public final class AirpodsMotionFlutterPlugin: NSObject, FlutterPlugin, FlutterS
 
     os_unfair_lock_lock(&motionLock)
     configuredSampleRateHz = rate
-    minEmitIntervalMs = Int64(max(10, 1000 / rate))
+    minEmitIntervalSec = max(0.01, 1.0 / Double(rate))
     filterMode = mode
     smoothingAlpha = alpha
-    pitchOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff)
-    rollOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff)
-    yawOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff)
-    accelOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff)
+    pitchOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff, isAngleDegrees: true)
+    rollOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff, isAngleDegrees: true)
+    yawOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff, isAngleDegrees: true)
+    accelOneEuro = NativeOneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff, isAngleDegrees: false)
     hasFilteredSample = false
-    lastEmitTimeMs = 0
+    lastEmitTimestampSec = nil
     os_unfair_lock_unlock(&motionLock)
   }
 
   /// Must be called with `motionLock` held.
   private func resetFiltersLocked() {
     hasFilteredSample = false
-    lastEmitTimeMs = 0
+    lastEmitTimestampSec = nil
     pitchOneEuro.reset()
     rollOneEuro.reset()
     yawOneEuro.reset()

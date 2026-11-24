@@ -20,12 +20,40 @@ enum AirPodsFilterMode {
   }
 }
 
+/// Simulator behavior when native headphone motion hardware is unavailable.
+enum SimulatorFallbackMode {
+  /// Do not activate simulator mode; leave tracking inactive.
+  none,
+
+  /// Activate simulator mode without starting the procedural loop, allowing
+  /// manual calls to `simulator.emitEuler` / `simulator.emitSample` / `simulator.replayTrace`.
+  manual,
+
+  /// Activate simulator mode and automatically start the procedural sinusoidal loop.
+  syntheticLoop;
+
+  /// Parses a [SimulatorFallbackMode] from its wire string name.
+  static SimulatorFallbackMode fromWireValue(String? value) {
+    for (final mode in values) {
+      if (mode.name == value) {
+        return mode;
+      }
+    }
+    return SimulatorFallbackMode.syntheticLoop;
+  }
+}
+
 /// Configuration for headphone motion sampling, filtering, and simulator fallback.
 class AirPodsMotionConfig {
   /// Creates an [AirPodsMotionConfig].
   ///
   /// [sampleRateHz] is clamped to `1..100` Hz (default `15`).
   /// [smoothingAlpha] is clamped to `0.0..1.0` (default `0.25`).
+  ///
+  /// When [simulatorFallbackMode] is provided, it takes precedence over
+  /// [autoFallbackToSimulator]. Otherwise [autoFallbackToSimulator] derives
+  /// [SimulatorFallbackMode.syntheticLoop] when `true` or
+  /// [SimulatorFallbackMode.none] when `false`.
   const AirPodsMotionConfig({
     int sampleRateHz = 15,
     this.filterMode = AirPodsFilterMode.ema,
@@ -33,16 +61,23 @@ class AirPodsMotionConfig {
     this.oneEuroMinCutoff = 1.0,
     this.oneEuroBeta = 0.007,
     this.oneEuroDCutoff = 1.0,
-    this.autoFallbackToSimulator = true,
+    bool autoFallbackToSimulator = true,
+    SimulatorFallbackMode? simulatorFallbackMode,
   }) : sampleRateHz =
            sampleRateHz < 1 ? 1 : (sampleRateHz > 100 ? 100 : sampleRateHz),
        smoothingAlpha =
            smoothingAlpha < 0.0
                ? 0.0
-               : (smoothingAlpha > 1.0 ? 1.0 : smoothingAlpha);
+               : (smoothingAlpha > 1.0 ? 1.0 : smoothingAlpha),
+       simulatorFallbackMode =
+           simulatorFallbackMode ??
+           (autoFallbackToSimulator
+               ? SimulatorFallbackMode.syntheticLoop
+               : SimulatorFallbackMode.none);
 
   /// Deserializes an [AirPodsMotionConfig] from a map.
   factory AirPodsMotionConfig.fromMap(Map<String, dynamic> map) {
+    final rawMode = map['simulatorFallbackMode'] as String?;
     return AirPodsMotionConfig(
       sampleRateHz: (map['sampleRateHz'] as num?)?.toInt() ?? 15,
       filterMode: AirPodsFilterMode.fromWireValue(map['filterMode'] as String?),
@@ -52,6 +87,10 @@ class AirPodsMotionConfig {
       oneEuroDCutoff: (map['oneEuroDCutoff'] as num?)?.toDouble() ?? 1.0,
       autoFallbackToSimulator:
           (map['autoFallbackToSimulator'] as bool?) ?? true,
+      simulatorFallbackMode:
+          rawMode != null
+              ? SimulatorFallbackMode.fromWireValue(rawMode)
+              : null,
     );
   }
 
@@ -73,8 +112,12 @@ class AirPodsMotionConfig {
   /// Derivative cutoff frequency (Hz) for [AirPodsFilterMode.oneEuro].
   final double oneEuroDCutoff;
 
-  /// Automatically activates simulator mode when native motion hardware is unavailable.
-  final bool autoFallbackToSimulator;
+  /// Behavior when native headphone motion hardware is unavailable.
+  final SimulatorFallbackMode simulatorFallbackMode;
+
+  /// Whether simulator fallback mode is enabled (`simulatorFallbackMode != SimulatorFallbackMode.none`).
+  bool get autoFallbackToSimulator =>
+      simulatorFallbackMode != SimulatorFallbackMode.none;
 
   /// Returns a copy of this configuration with the specified overrides.
   AirPodsMotionConfig copyWith({
@@ -85,7 +128,18 @@ class AirPodsMotionConfig {
     double? oneEuroBeta,
     double? oneEuroDCutoff,
     bool? autoFallbackToSimulator,
+    SimulatorFallbackMode? simulatorFallbackMode,
   }) {
+    final resolvedMode =
+        simulatorFallbackMode ??
+        (autoFallbackToSimulator != null
+            ? (autoFallbackToSimulator
+                ? (this.simulatorFallbackMode == SimulatorFallbackMode.none
+                    ? SimulatorFallbackMode.syntheticLoop
+                    : this.simulatorFallbackMode)
+                : SimulatorFallbackMode.none)
+            : this.simulatorFallbackMode);
+
     return AirPodsMotionConfig(
       sampleRateHz: sampleRateHz ?? this.sampleRateHz,
       filterMode: filterMode ?? this.filterMode,
@@ -93,8 +147,7 @@ class AirPodsMotionConfig {
       oneEuroMinCutoff: oneEuroMinCutoff ?? this.oneEuroMinCutoff,
       oneEuroBeta: oneEuroBeta ?? this.oneEuroBeta,
       oneEuroDCutoff: oneEuroDCutoff ?? this.oneEuroDCutoff,
-      autoFallbackToSimulator:
-          autoFallbackToSimulator ?? this.autoFallbackToSimulator,
+      simulatorFallbackMode: resolvedMode,
     );
   }
 
@@ -107,6 +160,7 @@ class AirPodsMotionConfig {
     'oneEuroBeta': oneEuroBeta,
     'oneEuroDCutoff': oneEuroDCutoff,
     'autoFallbackToSimulator': autoFallbackToSimulator,
+    'simulatorFallbackMode': simulatorFallbackMode.name,
   };
 
   @override
@@ -120,7 +174,7 @@ class AirPodsMotionConfig {
           oneEuroMinCutoff == other.oneEuroMinCutoff &&
           oneEuroBeta == other.oneEuroBeta &&
           oneEuroDCutoff == other.oneEuroDCutoff &&
-          autoFallbackToSimulator == other.autoFallbackToSimulator;
+          simulatorFallbackMode == other.simulatorFallbackMode;
 
   @override
   int get hashCode => Object.hash(
@@ -130,7 +184,7 @@ class AirPodsMotionConfig {
     oneEuroMinCutoff,
     oneEuroBeta,
     oneEuroDCutoff,
-    autoFallbackToSimulator,
+    simulatorFallbackMode,
   );
 
   @override
@@ -138,5 +192,6 @@ class AirPodsMotionConfig {
       'AirPodsMotionConfig(sampleRateHz: $sampleRateHz, filterMode: $filterMode, '
       'smoothingAlpha: $smoothingAlpha, oneEuroMinCutoff: $oneEuroMinCutoff, '
       'oneEuroBeta: $oneEuroBeta, oneEuroDCutoff: $oneEuroDCutoff, '
-      'autoFallbackToSimulator: $autoFallbackToSimulator)';
+      'autoFallbackToSimulator: $autoFallbackToSimulator, '
+      'simulatorFallbackMode: $simulatorFallbackMode)';
 }

@@ -14,7 +14,10 @@ let package = Package(
   targets: [
     .target(
       name: "airpods_motion_flutter",
-      dependencies: []
+      dependencies: [],
+      resources: [
+        .process("PrivacyInfo.xcprivacy")
+      ]
     )
   ]
 )

@@ -2,6 +2,17 @@ import 'dart:math' as math;
 
 import '../models/headphone_motion_sample.dart';
 
+double _wrapAngleDeg(double angle) {
+  var wrapped = (angle + 180.0) % 360.0;
+  if (wrapped <= 0.0) {
+    wrapped += 360.0;
+  }
+  return wrapped - 180.0;
+}
+
+double _shortestAngleDeltaDeg(double from, double to) =>
+    _wrapAngleDeg(to - from);
+
 /// Pure-Dart implementation of the adaptive 1-Euro low-pass filter
 /// (Casiez, Roussel, & Vogel, CHI 2012).
 ///
@@ -13,10 +24,16 @@ class OneEuroFilter {
   /// - [minCutoff]: Minimum cutoff frequency in Hz (lower = smoother at rest).
   /// - [beta]: Speed coefficient (higher = less lag during fast motion).
   /// - [dCutoff]: Cutoff frequency in Hz for the derivative low-pass filter.
-  OneEuroFilter({this.minCutoff = 1.0, this.beta = 0.007, this.dCutoff = 1.0})
-    : assert(minCutoff > 0, 'minCutoff must be > 0'),
-      assert(beta >= 0, 'beta must be >= 0'),
-      assert(dCutoff > 0, 'dCutoff must be > 0');
+  /// - [isAngleDegrees]: When `true`, unwraps Euler degree inputs across the
+  ///   `±180°` boundary before filtering and wraps outputs back into `(-180, 180]`.
+  OneEuroFilter({
+    this.minCutoff = 1.0,
+    this.beta = 0.007,
+    this.dCutoff = 1.0,
+    this.isAngleDegrees = false,
+  }) : assert(minCutoff > 0, 'minCutoff must be > 0'),
+       assert(beta >= 0, 'beta must be >= 0'),
+       assert(dCutoff > 0, 'dCutoff must be > 0');
 
   /// Minimum cutoff frequency in Hz.
   final double minCutoff;
@@ -27,6 +44,9 @@ class OneEuroFilter {
   /// Derivative filter cutoff frequency in Hz.
   final double dCutoff;
 
+  /// Whether samples represent Euler angles in degrees wrapping at `±180°`.
+  final bool isAngleDegrees;
+
   double? _lastTimestampSeconds;
   double? _xPrev;
   double _dxPrev = 0.0;
@@ -34,10 +54,11 @@ class OneEuroFilter {
   /// Filters [value] sampled at [timestampSeconds] (monotonic or epoch seconds).
   double filter(double value, {required double timestampSeconds}) {
     if (_lastTimestampSeconds == null || _xPrev == null) {
+      final initial = isAngleDegrees ? _wrapAngleDeg(value) : value;
       _lastTimestampSeconds = timestampSeconds;
-      _xPrev = value;
+      _xPrev = initial;
       _dxPrev = 0.0;
-      return value;
+      return initial;
     }
 
     final dt = timestampSeconds - _lastTimestampSeconds!;
@@ -46,13 +67,20 @@ class OneEuroFilter {
     }
     _lastTimestampSeconds = timestampSeconds;
 
-    final dx = (value - _xPrev!) / dt;
+    final basePrev = isAngleDegrees ? _wrapAngleDeg(_xPrev!) : _xPrev!;
+    final target =
+        isAngleDegrees
+            ? basePrev + _shortestAngleDeltaDeg(basePrev, value)
+            : value;
+
+    final dx = (target - basePrev) / dt;
     final alphaD = _smoothingFactor(dt, dCutoff);
     final dxHat = _exponentialSmoothing(alphaD, dx, _dxPrev);
 
     final cutoff = minCutoff + beta * dxHat.abs();
     final alpha = _smoothingFactor(dt, cutoff);
-    final xHat = _exponentialSmoothing(alpha, value, _xPrev!);
+    final rawXHat = _exponentialSmoothing(alpha, target, basePrev);
+    final xHat = isAngleDegrees ? _wrapAngleDeg(rawXHat) : rawXHat;
 
     _xPrev = xHat;
     _dxPrev = dxHat;
@@ -91,17 +119,25 @@ class OneEuroPoseFilter {
          minCutoff: minCutoff,
          beta: beta,
          dCutoff: dCutoff,
+         isAngleDegrees: true,
        ),
        _roll = OneEuroFilter(
          minCutoff: minCutoff,
          beta: beta,
          dCutoff: dCutoff,
+         isAngleDegrees: true,
        ),
-       _yaw = OneEuroFilter(minCutoff: minCutoff, beta: beta, dCutoff: dCutoff),
+       _yaw = OneEuroFilter(
+         minCutoff: minCutoff,
+         beta: beta,
+         dCutoff: dCutoff,
+         isAngleDegrees: true,
+       ),
        _accel = OneEuroFilter(
          minCutoff: minCutoff,
          beta: beta,
          dCutoff: dCutoff,
+         isAngleDegrees: false,
        );
 
   final OneEuroFilter _pitch;

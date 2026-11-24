@@ -1,5 +1,11 @@
 # airpods_motion_flutter
 
+[![pub package](https://img.shields.io/pub/v/airpods_motion_flutter.svg)](https://pub.dev/packages/airpods_motion_flutter)
+[![style: flutter_lints](https://img.shields.io/badge/style-flutter__lints-0175C2.svg)](https://pub.dev/packages/flutter_lints)
+[![platform: iOS | macOS](https://img.shields.io/badge/platform-iOS%20%7C%20macOS-lightgrey.svg)](https://pub.dev/packages/airpods_motion_flutter)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/samderlust)
+
 Calibrated 6-DoF AirPods & Beats head-motion telemetry (`CMHeadphoneMotionManager`) for Flutter (iOS 14+ & macOS 14+) with live `AVAudioSession` route detection, native 1-Euro / EMA smoothing, configurable throttling, and deterministic simulator & trace replay.
 
 ## Features
